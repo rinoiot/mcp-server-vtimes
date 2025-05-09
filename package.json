@@ -1,18 +1,17 @@
 {
-
   "name": "mcp-server-vtimes",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "rinoiot",
   "description": "iot platform mcp service",
   "keywords": ["utils", "iot"],
   "repository": {
     "type": "git",
-    "url": "https://github.com/rinoiot/mcp-server-vtimes"
+    "url": "git+https://github.com/rinoiot/mcp-server-vtimes.git"
   },
   "license": "GPLv3",
   "homepage": "https://rinoiot.com",
   "bugs": "https://github.com/rinoiot/mcp-server-vtimes/issues",
-  "main": "index.js",
+  "main": "build/index.js",
   "type": "module",
   "bin": {
     "mcp-server-vtimes": "./build/index.js"
