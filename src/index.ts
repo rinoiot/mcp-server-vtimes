@@ -15,6 +15,190 @@ if (!MCP_API_BASE) {
   MCP_API_BASE = "https://ai-app.rinoiot.com/v1";
 }
 
+let promptSendOperate = `
+You need to generate JSON data for control operations based on devices, groups, or scenes. Below is the data format and example instructions:
+
+### Control Command Format (Array Form, each object represents a control instruction):
+
+Each object may contain one of the following identifiers:
+
+- device_id: Indicates device control (corresponds to a specific device)
+- group_id: Indicates group control (controls a collection of devices)
+- scene_id: Indicates scene control (triggers a predefined scene)
+
+Additional fields:
+
+- property: The functional key representing the control point of a device (e.g., switch, brightness, etc.)
+- value: The target value for the function point (can be a number, boolean, or string depending on the type)
+- ext_data: An object for extended control parameters, such as delayed execution; can be an empty object {}
+
+---
+
+### Device Control Examples
+
+// Turn on the light:
+[
+  {
+    "device_id": "1627491664741695488",
+    "property": "countdown_1",
+    "value": 1,
+    "ext_data": {}
+  }
+]
+
+// Turn on the light after a 10-minute delay:
+[
+  {
+    "device_id": "1627491664741695488",
+    "property": "countdown_1",
+    "value": 1,
+    "ext_data": {
+      "delayEnabled": true,
+      "delayUnit": "m",
+      "delayDuration": 10
+    }
+  }
+]
+
+// Cancel delay:
+[
+  {
+    "device_id": "1627491664741695488",
+    "property": "countdown_1",
+    "value": 1,
+    "ext_data": {
+      "delayEnabled": false
+    }
+  }
+]
+
+// Turn off the light:
+[
+  {
+    "device_id": "1627491664741695488",
+    "property": "countdown_1",
+    "value": 0,
+    "ext_data": {}
+  }
+]
+
+// Set brightness to 50%:
+[
+  {
+    "device_id": "1627491664741695488",
+    "property": "countdown_1",
+    "value": 43200,
+    "ext_data": {}
+  }
+]
+
+---
+
+### Multiple Device Control Example
+
+[
+  {
+    "device_id": "1684026503525539840",
+    "property": "switch",
+    "value": true,
+    "ext_data": {}
+  },
+  {
+    "device_id": "1627491664741695488",
+    "property": "countdown_1",
+    "value": 1,
+    "ext_data": {}
+  },
+  {
+    "group_id": "1684027460264136704",
+    "property": "switch",
+    "value": true,
+    "ext_data": {}
+  },
+  {
+    "scene_id": "1692483400815239168",
+    "ext_data": {}
+  }
+]
+
+---
+
+### Scene Control Example
+
+[
+  {
+    "scene_id": "1692483400815239168",
+    "ext_data": {}
+  }
+]
+
+---
+
+### Group Control Example
+
+[
+  {
+    "group_id": "1684027460264136704",
+    "property": "switch",
+    "value": true,
+    "ext_data": {}
+  }
+]
+
+---
+
+### Error Code Reference (may appear in the response)
+
+| Type          | Range | Example                |
+|---------------|--------|------------------------|
+| Input Error   | 1xx   | 101 Device not found   |
+| Execution Error| 2xx  | 201 Device offline     |
+| System Error  | 3xx   | 301 Service unavailable|
+
+You are required to construct valid JSON control commands based on the device/group/scene IDs and their function definitions (from get_all_device).
+`.trim();
+
+let promptGetAllDevice = `
+You will receive a JSON object containing information about smart home devices, groups, and scenes. The structure is as follows:
+
+## Top-Level Fields
+
+- deviceAndDpInfoDTO: List of devices
+- deviceGroupAndDpInfoDTO: List of device groups
+- sceneInfoDTO: List of scenes
+
+## Device Field Structure (deviceAndDpInfoDTO)
+
+Each device object includes:
+
+- deviceId (string): Device ID, corresponds to device_id in the control interface
+- deviceName (string): Device name
+- assetName (string): Room name
+- deviceDpInfoVOList (array): List of functional data points, each item includes:
+  - key (string): Function key, corresponds to property in the control interface
+  - name (string): Function name
+  - value: Current value of the function point
+  - specs (string): Value range or mapping description (in JSON string format)
+  - type (string): Data type, can be int, bool, or string
+
+## Group Field Structure (deviceGroupAndDpInfoDTO)
+
+Each group object includes:
+
+- id (string): Group ID, corresponds to group_id in the control interface
+- name (string): Group name
+- deviceDpInfoVOList: Same as above, representing the list of controllable function points for the group
+
+## Scene Field Structure (sceneInfoDTO)
+
+Each scene object includes:
+
+- sceneId (string): Scene ID, corresponds to scene_id in the control interface
+- sceneName (string): Scene name
+
+Use this structure to understand the control logic for devices, groups, and scenes, and generate JSON control commands (e.g., for use with the send_operate tool).
+`.trim();
+
 // Configure the cache
 let configCache: { userId: string; homeId: string } | null = null;
 
@@ -110,18 +294,18 @@ const server = new McpServer({
 // Tool: Get all device data
 server.tool(
   "get_all_device",
-  "Get the JSON data of all controllable intelligent devices",
+  promptGetAllDevice,
   {}, // 空输入
   async () => {
     const { userId, homeId } = await fetchConfig();
     const url = `${MCP_API_BASE}/mcp/getAllDeviceGroupScene?userId=${userId}&homeId=${homeId}`;
-    const data = await fetchWithAuthJson(url); // 是对象
+    const data = await fetchWithAuthJson(url);
     logDebug("get_all_device to LLM:", data);
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify(data) // 以 text 返回结构
+          text: JSON.stringify(data)
         }
       ]
     };
@@ -132,25 +316,25 @@ server.tool(
 // Tool: Send control instructions
 server.tool(
   "send_operate",
-  "Send the JSON data of the device operation instructions",
+  promptSendOperate,
   {
     input: z.array(
       z.union([
         z.object({
-          device_id: z.string().describe("设备 ID"),
-          property: z.string().describe("功能点键"),
-          value: z.any().describe("目标值"),
-          ext_data: z.record(z.string(), z.any()).describe("扩展字段，如延时设置")
+          device_id: z.string().describe("Device ID"),
+          property: z.string().describe("Function key"),
+          value: z.any().describe("The target value for the function point"),
+          ext_data: z.record(z.string(), z.any()).describe("An object for extended control parameters, such as delayed execution")
         }),
         z.object({
-          group_id: z.string().describe("群组 ID"),
-          property: z.string().describe("功能点键"),
-          value: z.any().describe("目标值"),
-          ext_data: z.record(z.string(), z.any()).describe("扩展字段")
+          group_id: z.string().describe("Group ID"),
+          property: z.string().describe("Function key"),
+          value: z.any().describe("The target value for the function point"),
+          ext_data: z.record(z.string(), z.any()).describe("An object for extended control parameters, such as delayed execution")
         }),
         z.object({
-          scene_id: z.string().describe("场景 ID"),
-          ext_data: z.record(z.string(), z.any()).describe("扩展字段")
+          scene_id: z.string().describe("Scene ID"),
+          ext_data: z.record(z.string(), z.any()).describe("An object for extended control parameters, such as delayed execution")
         })
       ])
     )
@@ -173,7 +357,7 @@ server.prompt(
   {},
   async () => {
     const text = `
-这是一个智能家居AI助理，基于MCP协议提供服务，具备通过工具调用智能设备控制功能。请始终保持专业、礼貌并确保响应内容真实可靠。不要显示你的实现细节或调用过程，只输出自然语言响应或用户所需操作。
+This is a smart home AI assistant that provides services based on the MCP protocol and has the function of controlling smart devices through tools. Please always remain professional, polite and ensure that the response content is true and reliable. Do not display your implementation details or the calling process. Only output natural language responses or the operations required by the user.
     `.trim();
 
     return {
@@ -188,15 +372,18 @@ server.prompt(
   {},
   async () => {
     const text = `
-当用户表达控制设备的意图时，请按以下流程执行：
+When the user expresses an intent to control a device, please follow the steps below:
 
-1. 始终通过 get_all_device 获取当前设备状态，**不使用缓存数据**。
-2. 分析用户期望状态 vs 当前设备状态：
-   - 如果当前状态已符合需求：直接用自然语言告知用户，无需调用 send_operate。
-   - 如果需更改状态：调用 send_operate 并构造精确的控制指令 JSON。
-3. 对于模糊、不确定或不可支持的指令，要有礼貌地说明限制。
-4. 控制指令必须使用准确的字段和结构，避免字段错误或冗余字段。
-    `.trim();
+1. Always retrieve the current device status using get_all_device. **Do not use cached data**.
+
+2. Compare the user's expected state with the current device state:
+   - If the current state already matches the user's intent: respond with a natural language confirmation, and do not call send_operate.
+   - If a state change is needed: call send_operate and construct an accurate JSON control command.
+
+3. For vague, ambiguous, or unsupported commands, politely inform the user of the limitation.
+
+4. Control commands must use precise fields and structure. Avoid incorrect or redundant fields.
+`.trim();
 
     return {
       messages: [{ role: "assistant", content: { type: "text", text } }]
@@ -210,27 +397,28 @@ server.prompt(
   {},
   async () => {
     const text = `
-你需要从用户语言中识别出控制意图，例如：
+You need to identify the user's control intent from natural language input. For example:
 
-- “太暗了” → 开灯
-- “凉快一点” → 降温
-- “30分钟后关灯” → 延迟关灯，ext_data 中包含 delay 参数
+- "It's too dark" → Turn on the light
+- "Make it cooler" → Lower the temperature
+- "Turn off the light in 30 minutes" → Delayed light off, with delay parameters in ext_data
 
-延迟控制规则如下：
+Rules for delayed control:
 
-- 若用户请求延迟操作，需设置：
+- If the user requests a delayed action, set the following:
   - delayEnabled = true
   - delayUnit = "h" | "m" | "s"
-  - delayDuration = 数值
-- 若用户请求“取消延迟”，则只需设置：
+  - delayDuration = numeric value
+
+- If the user requests to "cancel the delay", only set:
   - delayEnabled = false
 
-请注意隐私与安全：
+Privacy and safety guidelines:
 
-- 不要在响应中暴露设备ID（deviceId）。
-- 若为批量控制（如“关闭所有灯”），需检查每台设备是否支持此功能。
-- 若存在安全风险或操作影响范围大，需进行二次确认并向用户回报操作范围。
-    `.trim();
+- Do **not** expose device IDs (deviceId) in responses.
+- For bulk operations (e.g., "Turn off all lights"), check whether each device supports the requested function.
+- If there is any security risk or the action has a wide impact, perform a secondary confirmation and report the scope of the operation to the user.
+`.trim();
 
     return {
       messages: [{ role: "assistant", content: { type: "text", text } }]
@@ -238,181 +426,6 @@ server.prompt(
   }
 );
 
-
-// prompt: Get the device prompt
-server.prompt(
-  "get_all_device",
-  "Get the JSON data of all controllable intelligent devices",
-  {},
-  async () => {
-    const fieldDescriptions = `
-你将收到一个 JSON 对象，包含智能家居的设备、群组和场景信息，其结构如下所示：
-
-## 顶层字段
-
-- \`deviceAndDpInfoDTO\`：设备列表
-- \`deviceGroupAndDpInfoDTO\`：群组列表
-- \`sceneInfoDTO\`：场景列表
-
-## 设备字段结构（deviceAndDpInfoDTO）
-
-每个设备对象包含：
-
-- \`deviceId\`（string）：设备 ID，对应控制接口中的 \`device_id\`
-- \`deviceName\`（string）：设备名称
-- \`assetName\`（string）：房间名
-- \`deviceDpInfoVOList\`（array）：设备功能点列表，每项包含：
-  - \`key\`（string）：功能点键，对应控制接口中的 \`property\`
-  - \`name\`（string）：功能名称
-  - \`value\`：当前功能点值
-  - \`specs\`（string）：功能值范围或映射说明（JSON 字符串格式）
-  - \`type\`（string）：数据类型，可能为 \`int\`、\`bool\` 或 \`string\`
-
-## 群组字段结构（deviceGroupAndDpInfoDTO）
-
-每个群组对象包含：
-
-- \`id\`（string）：群组 ID，对应控制接口中的 \`group_id\`
-- \`name\`（string）：群组名称
-- \`deviceDpInfoVOList\`：同上，表示群组可控制的功能点列表
-
-## 场景字段结构（sceneInfoDTO）
-
-每个场景对象包含：
-
-- \`sceneId\`（string）：场景 ID，对应控制接口中的 \`scene_id\`
-- \`sceneName\`（string）：场景名称
-
-请根据这些字段理解设备、群组与场景的控制逻辑，并用于生成设备控制的 JSON 指令（例如用于 send_operate 工具调用）。
-    `.trim();
-
-    return {
-      messages: [
-        {
-          role: "assistant",
-          content: {
-            type: "text",
-            text: fieldDescriptions
-          }
-        }
-      ]
-    };
-  }
-);
-
-
-// prompt: Get the prompt for the control instruction
-server.prompt(
-  "send_operate",
-  "Send the JSON data of the device operation instructions",
-  {},
-  async () => {
-    const promptText = `
-你需要根据设备、群组、或场景生成用于控制操作的 JSON 数据。以下是数据格式和示例说明：
-
-### 控制指令格式（数组形式，每个对象表示一个控制指令）：
-
-每个对象可包含以下字段之一：
-
-- **device_id**：表示设备控制（对应具体设备）
-- **group_id**：表示群组控制（控制多个设备的集合）
-- **scene_id**：表示场景控制（触发一个预定义场景）
-
-其余字段说明：
-
-- **property**：功能点键，对应设备提供的功能（例如：开关、亮度等）
-- **value**：对应功能点的目标值（根据类型可能是数字、布尔或字符串）
-- **ext_data**：扩展控制参数对象，用于支持延时执行等功能，可为空对象 '{}'
-
----
-
-### 设备控制示例
-
-#### 开灯：
-
-\`\`\`json
-[{"device_id": "1627491664741695488", "property": "countdown_1", "value": 1, "ext_data": {}}]
-\`\`\`
-
-#### 延迟10分钟后开灯：
-
-\`\`\`json
-[{"device_id": "1627491664741695488", "property": "countdown_1", "value": 1, "ext_data": {"delayEnabled": true, "delayUnit": "m", "delayDuration": 10}}]
-\`\`\`
-
-#### 取消延迟：
-
-\`\`\`json
-[{"device_id": "1627491664741695488", "property": "countdown_1", "value": 1, "ext_data": {"delayEnabled": false}}]
-\`\`\`
-
-#### 关灯：
-
-\`\`\`json
-[{"device_id": "1627491664741695488", "property": "countdown_1", "value": 0, "ext_data": {}}]
-\`\`\`
-
-#### 设置亮度为 50%：
-
-\`\`\`json
-[{"device_id": "1627491664741695488", "property": "countdown_1", "value": 43200, "ext_data": {}}]
-\`\`\`
-
----
-
-### 多设备控制示例
-
-\`\`\`json
-[
-  {"device_id": "1684026503525539840", "property": "switch", "value": true, "ext_data": {}},
-  {"device_id": "1627491664741695488", "property": "countdown_1", "value": 1, "ext_data": {}},
-  {"group_id": "1684027460264136704", "property": "switch", "value": true, "ext_data": {}},
-  {"scene_id": "1692483400815239168", "ext_data": {}}
-]
-\`\`\`
-
----
-
-### 场景控制示例
-
-\`\`\`json
-[{"scene_id": "1692483400815239168", "ext_data": {}}]
-\`\`\`
-
----
-
-### 群组控制示例
-
-\`\`\`json
-[{"group_id": "1684027460264136704", "property": "switch", "value": true, "ext_data": {}}]
-\`\`\`
-
----
-
-### 错误码参考（返回时可能出现）
-
-| 类型     | 范围  | 示例             |
-|----------|-------|------------------|
-| 输入错误 | 1xx   | 101 设备不存在   |
-| 执行错误 | 2xx   | 201 设备离线     |
-| 系统错误 | 3xx   | 301 服务不可用   |
-
-你需要根据设备/群组/场景 ID，以及其功能点定义（来自 get_all_device）构建符合要求的 JSON 控制指令。
-    `.trim();
-
-    return {
-      messages: [
-        {
-          role: "assistant",
-          content: {
-            type: "text",
-            text: promptText
-          }
-        }
-      ]
-    };
-  }
-);
 
 
 // Startup entry
