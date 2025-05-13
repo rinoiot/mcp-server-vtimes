@@ -295,7 +295,7 @@ const server = new McpServer({
 server.tool(
   "get_all_device",
   promptGetAllDevice,
-  {}, // 空输入
+  {},
   async () => {
     const { userId, homeId } = await fetchConfig();
     const url = `${MCP_API_BASE}/mcp/getAllDeviceGroupScene?userId=${userId}&homeId=${homeId}`;
